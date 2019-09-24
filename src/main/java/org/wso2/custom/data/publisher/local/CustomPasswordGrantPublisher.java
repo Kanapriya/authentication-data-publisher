@@ -129,12 +129,12 @@ public class CustomPasswordGrantPublisher extends AbstractIdentityHandler implem
 
         // Publishing step event
         payloadData = buildPayloadData(tokenData, authenticatedSubjectIdentifier, requestType, serviceProvider,
-                AuthPublisherConstants.STEP_EVENT, "1");
+                AuthPublisherConstants.STEP_EVENT);
         this.publishTokenIssueEvent(tokenData, payloadData);
 
         //Publishing overall event
         payloadData = buildPayloadData(tokenData, authenticatedSubjectIdentifier, requestType, serviceProvider,
-                AuthPublisherConstants.OVERALL_EVENT, "0");
+                AuthPublisherConstants.OVERALL_EVENT);
         this.publishTokenIssueEvent(tokenData, payloadData);
     }
 
@@ -203,10 +203,8 @@ public class CustomPasswordGrantPublisher extends AbstractIdentityHandler implem
                 FrameworkUtils.startTenantFlow(MultitenantConstants.SUPER_TENANT_DOMAIN_NAME);
                 for (String publishingDomain : publishingDomains) {
                     Object[] metadataArray = OAuthDataPublisherUtils.getMetaDataArray(publishingDomain);
-
                     event = new Event(TOKEN_ISSUE_EVENT_STREAM_NAME, System.currentTimeMillis(), metadataArray,
                             null, payloadData);
-
                     CustomOAuthDataPublisherServiceHolder.getInstance().getPublisherService().publish(event);
                     if (LOG.isDebugEnabled() && event != null) {
                         LOG.debug("Sending out event : " + event.toString());
@@ -222,7 +220,7 @@ public class CustomPasswordGrantPublisher extends AbstractIdentityHandler implem
      * Create the payload to publish the events
      */
     private Object[] buildPayloadData(TokenData tokenData, String authenticatedSubjectIdentifier, String requestType,
-                                      String serviceProvider, String eventType, String stepNo) {
+                                      String serviceProvider, String eventType) {
 
         Object[] payloadData = new Object[23];
         payloadData[0] = AuthPublisherConstants.NOT_AVAILABLE; //contextId
@@ -243,9 +241,9 @@ public class CustomPasswordGrantPublisher extends AbstractIdentityHandler implem
         payloadData[15] = AuthnDataPublisherUtils.replaceIfNotAvailable(AuthPublisherConstants.CONFIG_PREFIX +
                 AuthPublisherConstants.ROLES, getCommaSeparatedUserRoles(tokenData.getUserStoreDomain() + "/" + tokenData
                 .getUser(), tokenData.getTenantDomain())); // rolesCommaSeparated
-        payloadData[16] = stepNo; //authenticationStep
+        payloadData[16] = "1"; //authenticationStep
         payloadData[17] = "LOCAL"; //identityProvider
-        payloadData[18] = false; //authStepSuccess
+        payloadData[18] = true; //authStepSuccess
         payloadData[19] = "PasswordGrant"; //stepAuthenticator
         payloadData[20] = false; //isFirstLogin
         payloadData[21] = "LOCAL"; //identityProviderType
@@ -301,12 +299,9 @@ public class CustomPasswordGrantPublisher extends AbstractIdentityHandler implem
         if (tenantDomain == null || userName == null) {
             return StringUtils.EMPTY;
         }
-
         int tenantId = IdentityTenantUtil.getTenantId(tenantDomain);
         RealmService realmService = IdentityTenantUtil.getRealmService();
-
         UserStoreManager userstore = null;
-
         try {
             UserRealm userRealm = realmService.getTenantUserRealm(tenantId);
             if (userRealm != null) {
