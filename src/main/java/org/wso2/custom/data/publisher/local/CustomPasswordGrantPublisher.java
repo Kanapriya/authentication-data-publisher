@@ -33,7 +33,7 @@ import org.wso2.custom.data.publisher.local.internal.CustomOAuthDataPublisherSer
 
 import java.util.*;
 
-public class CustomPasswordGrantPublisher  extends AbstractIdentityHandler implements OAuthEventInterceptor {
+public class CustomPasswordGrantPublisher extends AbstractIdentityHandler implements OAuthEventInterceptor {
 
     public static final Log LOG = LogFactory.getLog(CustomPasswordGrantPublisher.class);
 
@@ -47,8 +47,9 @@ public class CustomPasswordGrantPublisher  extends AbstractIdentityHandler imple
     }
 
     @Override
-    public void onPreTokenIssue(OAuth2AccessTokenReqDTO oAuth2AccessTokenReqDTO, OAuthTokenReqMessageContext oAuthTokenReqMessageContext, Map<String, Object> map) throws IdentityOAuth2Exception {
-
+    public void onPreTokenIssue(OAuth2AccessTokenReqDTO oAuth2AccessTokenReqDTO,
+                                OAuthTokenReqMessageContext oAuthTokenReqMessageContext, Map<String, Object> map)
+            throws IdentityOAuth2Exception {
     }
 
     @Override
@@ -58,6 +59,7 @@ public class CustomPasswordGrantPublisher  extends AbstractIdentityHandler imple
                                  Map<String, Object> params) throws IdentityOAuth2Exception {
 
         TokenData tokenData = new TokenData();
+
         if (!isPasswordGrant(tokenReqDTO)) {
             return;
         }
@@ -69,6 +71,7 @@ public class CustomPasswordGrantPublisher  extends AbstractIdentityHandler imple
         String authenticatedUserTenantDomain = "N/A";
         String requestInitiator;
         String[] publishingTenantDomains = null;
+        Object[] payloadData;
 
         if (tokReqMsgCtx.getProperty("OAuthAppDO") instanceof OAuthAppDO) {
             OAuthAppDO oAuthAppDO = (OAuthAppDO) tokReqMsgCtx.getProperty("OAuthAppDO");
@@ -78,11 +81,13 @@ public class CustomPasswordGrantPublisher  extends AbstractIdentityHandler imple
 
         requestInitiator = getResourceOwnerUsername(tokReqMsgCtx);
         if (isTokenRequestSuccessful(tokReqMsgCtx)) {
+            // found the authenticated subject identifier, user store domain and tenant domain from tokReqMsgCtx
             authenticatedSubjectIdentifier = getAuthenticatedSubjectIdentifier(tokReqMsgCtx);
             authenticatedUserStoreDomain = tokReqMsgCtx.getAuthorizedUser().getUserStoreDomain();
             authenticatedUserTenantDomain = tokReqMsgCtx.getAuthorizedUser().getTenantDomain();
         }
-        if (authenticatedSubjectIdentifier!= null) {
+        if (authenticatedSubjectIdentifier != null) {
+            // Set the required properties to the payload
             tokenData.setIsSuccess(true);
             tokenData.setUser(requestInitiator);
             tokenData.setUserStoreDomain(authenticatedUserStoreDomain);
@@ -121,8 +126,16 @@ public class CustomPasswordGrantPublisher  extends AbstractIdentityHandler imple
         tokenData.setAccessTokenValidityMillis(tokenRespDTO.getExpiresInMillis());
 
         tokenData.addParameter(OAuthDataPublisherConstants.TENANT_ID, publishingTenantDomains);
-        this.publishTokenIssueEvent(tokenData, authenticatedSubjectIdentifier, requestType, serviceProvider);
 
+        // Publishing step event
+        payloadData = buildPayloadData(tokenData, authenticatedSubjectIdentifier, requestType, serviceProvider,
+                AuthPublisherConstants.STEP_EVENT, "1");
+        this.publishTokenIssueEvent(tokenData, payloadData);
+
+        //Publishing overall event
+        payloadData = buildPayloadData(tokenData, authenticatedSubjectIdentifier, requestType, serviceProvider,
+                AuthPublisherConstants.OVERALL_EVENT, "0");
+        this.publishTokenIssueEvent(tokenData, payloadData);
     }
 
     @Override
@@ -180,35 +193,9 @@ public class CustomPasswordGrantPublisher  extends AbstractIdentityHandler imple
 
     }
 
-    public void publishTokenIssueEvent(TokenData tokenData,String authenticatedSubjectIdentifier, String requestType,
-                                       String serviceProvider) {
+    private void publishTokenIssueEvent(TokenData tokenData, Object[] payloadData) {
 
-        Object[] payloadData = new Object[23];
-        payloadData[0] = AuthPublisherConstants.NOT_AVAILABLE;
-        payloadData[1] = UUID.randomUUID().toString();
-        payloadData[2] = AuthPublisherConstants.STEP_EVENT;
-        payloadData[3] = tokenData.isSuccess();
-        payloadData[4] = tokenData.getUser();
-        payloadData[5] = authenticatedSubjectIdentifier;
-        payloadData[6] = tokenData.getUserStoreDomain();
-        payloadData[7] = tokenData.getTenantDomain();
-        payloadData[8] = AuthPublisherConstants.NOT_AVAILABLE;
-        payloadData[9] = AuthPublisherConstants.NOT_AVAILABLE;
-        payloadData[10] = requestType;
-        payloadData[11] = serviceProvider;
-        payloadData[12] = false;
-        payloadData[13] = false;
-        payloadData[14] = false;
-        payloadData[15] = AuthnDataPublisherUtils.replaceIfNotAvailable(AuthPublisherConstants.CONFIG_PREFIX +
-                AuthPublisherConstants.ROLES, getCommaSeparatedUserRoles(tokenData.getUserStoreDomain() + "/" + tokenData
-                .getUser(), tokenData.getTenantDomain()));
-        payloadData[16] = "1";
-        payloadData[17] = "LOCAL";
-        payloadData[18] = false;
-        payloadData[19] = AuthPublisherConstants.NOT_AVAILABLE;
-        payloadData[20] = true;
-        payloadData[21] = "LOCAL";
-        payloadData[22] = System.currentTimeMillis();
+        Event event;
 
         String[] publishingDomains = (String[]) tokenData.getParameter(OAuthDataPublisherConstants.TENANT_ID);
         if (publishingDomains != null && publishingDomains.length > 0) {
@@ -217,9 +204,10 @@ public class CustomPasswordGrantPublisher  extends AbstractIdentityHandler imple
                 for (String publishingDomain : publishingDomains) {
                     Object[] metadataArray = OAuthDataPublisherUtils.getMetaDataArray(publishingDomain);
 
-                    Event event = new Event(TOKEN_ISSUE_EVENT_STREAM_NAME, System.currentTimeMillis(), metadataArray, null, payloadData);
-                    CustomOAuthDataPublisherServiceHolder.getInstance().getPublisherService().publish(event);
+                    event = new Event(TOKEN_ISSUE_EVENT_STREAM_NAME, System.currentTimeMillis(), metadataArray,
+                            null, payloadData);
 
+                    CustomOAuthDataPublisherServiceHolder.getInstance().getPublisherService().publish(event);
                     if (LOG.isDebugEnabled() && event != null) {
                         LOG.debug("Sending out event : " + event.toString());
                     }
@@ -228,6 +216,42 @@ public class CustomPasswordGrantPublisher  extends AbstractIdentityHandler imple
                 FrameworkUtils.endTenantFlow();
             }
         }
+    }
+
+    /**
+     * Create the payload to publish the events
+     */
+    private Object[] buildPayloadData(TokenData tokenData, String authenticatedSubjectIdentifier, String requestType,
+                                      String serviceProvider, String eventType, String stepNo) {
+
+        Object[] payloadData = new Object[23];
+        payloadData[0] = AuthPublisherConstants.NOT_AVAILABLE; //contextId
+        payloadData[1] = UUID.randomUUID().toString();//eventId
+        payloadData[2] = eventType; //eventType
+        payloadData[3] = tokenData.isSuccess(); //authenticationSuccess
+        payloadData[4] = tokenData.getUser(); // username
+        payloadData[5] = authenticatedSubjectIdentifier; // localUserName
+        payloadData[6] = tokenData.getUserStoreDomain(); // userStoreDomain
+        payloadData[7] = tokenData.getTenantDomain(); // tenantDomain
+        payloadData[8] = AuthPublisherConstants.NOT_AVAILABLE; // remoteIp
+        payloadData[9] = AuthPublisherConstants.NOT_AVAILABLE; //region
+        payloadData[10] = requestType; // inboundAuthType
+        payloadData[11] = serviceProvider; //serviceProvider
+        payloadData[12] = false; //rememberMeEnabled
+        payloadData[13] = false; //forceAuthEnabled
+        payloadData[14] = false; //passiveAuthEnabled
+        payloadData[15] = AuthnDataPublisherUtils.replaceIfNotAvailable(AuthPublisherConstants.CONFIG_PREFIX +
+                AuthPublisherConstants.ROLES, getCommaSeparatedUserRoles(tokenData.getUserStoreDomain() + "/" + tokenData
+                .getUser(), tokenData.getTenantDomain())); // rolesCommaSeparated
+        payloadData[16] = stepNo; //authenticationStep
+        payloadData[17] = "LOCAL"; //identityProvider
+        payloadData[18] = false; //authStepSuccess
+        payloadData[19] = "PasswordGrant"; //stepAuthenticator
+        payloadData[20] = false; //isFirstLogin
+        payloadData[21] = "LOCAL"; //identityProviderType
+        payloadData[22] = System.currentTimeMillis(); //_timestamp
+
+        return payloadData;
     }
 
     /**
@@ -264,6 +288,10 @@ public class CustomPasswordGrantPublisher  extends AbstractIdentityHandler imple
     private boolean isPasswordGrant(OAuth2AccessTokenReqDTO tokenReqDTO) {
         return PASSWORD_GRANT.equals(tokenReqDTO.getGrantType());
     }
+
+    /**
+     * Retrieve the user roles for username
+     */
 
     private String getCommaSeparatedUserRoles(String userName, String tenantDomain) {
 
@@ -320,16 +348,12 @@ public class CustomPasswordGrantPublisher  extends AbstractIdentityHandler imple
 //            String header = arr$[i$];
 //            String ip = request.getHeader(header);
 //            if (ip != null && ip.length() != 0 && !"unknown".equalsIgnoreCase(ip)) {
-//                return getFirstIP(ip);
+//                return StringUtils.isNotEmpty(ip) && ip.contains(",") ? ip.split(",")[0] : ip;
+//
 //            }
 //        }
 //
 //        return request.getRemoteAddr();
-//    }
-//
-//
-//    public static String getFirstIP(String commaSeparatedIPs) {
-//        return StringUtils.isNotEmpty(commaSeparatedIPs) && commaSeparatedIPs.contains(",") ? commaSeparatedIPs.split(",")[0] : commaSeparatedIPs;
 //    }
 
 }
